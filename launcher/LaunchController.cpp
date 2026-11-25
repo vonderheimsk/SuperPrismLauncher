@@ -34,8 +34,9 @@
  *      limitations under the License.
  */
 
-#include "LaunchController.h"
+#include <qhashfunctions.h>
 #include "Application.h"
+#include "LaunchController.h"
 #include "launch/steps/PrintServers.h"
 #include "minecraft/auth/AccountData.h"
 #include "minecraft/auth/AccountList.h"
@@ -95,11 +96,11 @@ void LaunchController::decideAccount()
 
     if (!accounts->anyAccountIsValid()) {
         // Tell the user they need to log in at least one account in order to play.
-        auto reply = CustomMessageBox::selectable(m_parentWidget, tr("No Accounts"),
-                                                  tr("In order to play Minecraft, you must have at least one Microsoft "
-                                                     "account which owns Minecraft logged in. "
-                                                     "Would you like to open the account manager to add an account now?"),
-                                                  QMessageBox::Information, QMessageBox::Yes | QMessageBox::No)
+        auto reply = CustomMessageBox::selectable(
+                         m_parentWidget, tr("No Accounts"),
+                         tr("In order to play Minecraft, you need to add an offline account or log in with a Microsoft account. "
+                            "Would you like to open the account manager to add an account now?"),
+                         QMessageBox::Information, QMessageBox::Yes | QMessageBox::No)
                          ->exec();
 
         if (reply == QMessageBox::Yes) {
@@ -152,7 +153,7 @@ LaunchDecision LaunchController::decideLaunchMode()
     }
 
     if (!accountToCheck) {
-        m_actualLaunchMode = LaunchMode::Demo;
+        m_actualLaunchMode = LaunchMode::Normal;
         return LaunchDecision::Continue;
     }
 
@@ -237,8 +238,9 @@ QString LaunchController::askOfflineName(const QString& playerName, bool* ok)
     title = tr("Player name");
     switch (m_actualLaunchMode) {
         case LaunchMode::Normal:
-            Q_ASSERT(false);
-            return "";
+            title = tr("No Minecraft profile");
+            message = tr("This account does not own Minecraft.\n\nChoose your offline mode player name");
+            break;
         case LaunchMode::Demo:
             message = tr("Choose your demo mode player name");
             break;
@@ -311,10 +313,25 @@ void LaunchController::login()
 
     if (m_accountToUse->accountType() != AccountType::Offline) {
         if (m_actualLaunchMode == LaunchMode::Normal && !m_accountToUse->hasProfile()) {
-            // Now handle setting up a profile name here...
-            if (ProfileSetupDialog dialog(m_accountToUse, m_parentWidget); dialog.exec() != QDialog::Accepted) {
-                emitAborted();
-                return;
+            if (m_accountToUse->ownsMinecraft()) {
+                // Now handle setting up a profile name here...
+                if (ProfileSetupDialog dialog(m_accountToUse, m_parentWidget); dialog.exec() != QDialog::Accepted) {
+                    emitAborted();
+                    return;
+                }
+            } else {
+                bool ok = false;
+                QString name = m_offlineName;
+                if (name.isEmpty()) {
+                    name = askOfflineName(m_session->player_name, &ok);
+                    if (!ok) {
+                        emitAborted();
+                        return;
+                    }
+                }
+
+                m_session->MakeOffline(name);
+                m_session->uuid = MinecraftAccount::uuidFromUsername(name).toString(QUuid::Id128);
             }
         }
 
